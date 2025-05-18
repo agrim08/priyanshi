@@ -1,5 +1,6 @@
 import express from "express";
 import Recipe from "../models/recipe.js";
+import User from "../models/user.js";
 import { userAuth } from "../middleware/userAuth.js";
 
 const recipeRouter = express.Router();
@@ -61,19 +62,38 @@ recipeRouter.get("/get_favorite_recipes", userAuth, async (req, res) => {
 
 recipeRouter.post("/favorite_recipe/:recipe_id", userAuth, async (req, res) => {
   const recipeId = req.params.recipe_id;
+  const { isFav } = req.body;
+
+  if (typeof isFav !== 'boolean') {
+    return res.status(400).json({ error: "isFav must be a boolean" });
+  }
+
   try {
     const recipe = await Recipe.findById(recipeId);
     if (!recipe) {
       return res.status(404).json({ error: "Recipe not found" });
     }
-    if (req.user.favoriteRecipes.includes(recipeId)) {
-      return res.status(400).json({ error: "Recipe already favorited" });
+
+    const recipeObjectId = recipe._id;
+    const userObjectId = req.user._id;
+
+    const isAlreadyFavorite = req.user.favoriteRecipes.some(id => id.toString() === recipeId);
+
+    if (isFav === false && isAlreadyFavorite) {
+      return res.status(400).json({ error: "Recipe is already marked as favorite" });
+    } else if (isFav === true && !isAlreadyFavorite) {
+      return res.status(400).json({ error: "Recipe is not marked as favorite" });
     }
-    req.user.favoriteRecipes.push(recipeId);
-    recipe.favoritedBy.push(req.user._id);
-    await req.user.save();
-    await recipe.save();
-    return res.status(200).json({ message: "Recipe added to favorites" });
+
+    if (isFav) {
+      await User.updateOne({ _id: userObjectId }, { $pull: { favoriteRecipes: recipeObjectId } });
+      await Recipe.updateOne({ _id: recipeObjectId }, { $pull: { favoritedBy: userObjectId } });
+      return res.status(200).json({ message: "Recipe removed from favorites" });
+    } else {
+      await User.updateOne({ _id: userObjectId }, { $addToSet: { favoriteRecipes: recipeObjectId } });
+      await Recipe.updateOne({ _id: recipeObjectId }, { $addToSet: { favoritedBy: userObjectId } });
+      return res.status(200).json({ message: "Recipe added to favorites" });
+    }
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: "Internal server error" });
